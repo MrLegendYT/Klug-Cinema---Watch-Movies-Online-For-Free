@@ -32,9 +32,6 @@ try {
   console.error("Firebase init failed:", e);
 }
 
-// Helper to determine if we are online (Redundant now as we force Firebase, but kept for structure)
-const IS_FIREBASE_CONFIGURED = true;
-
 // --- MOCK DATA (Fallback/Types) ---
 const INITIAL_CATEGORIES: Category[] = [
   { id: 'cat_1', name: 'Action' },
@@ -109,19 +106,67 @@ export const Store = {
     }
   },
 
-  // Special bypass for Secret Admin
+  // Special bypass for Secret Admin - NOW REAL
   loginAsAdmin: async (): Promise<User> => {
-      // NOTE: With Real Firebase, this user won't have permission to write to DB 
-      // unless you update rules or create a real auth user.
-      // Ideally, the user should login properly.
-      console.warn("Using Offline Admin Bypass. Database writes may fail if rules enforce authentication.");
-      return { 
-          id: 'admin_sys_virtual', 
-          name: 'System Admin', 
-          email: 'admin@flimlix.com', 
-          role: UserRole.ADMIN, 
-          credits: 9999 
-      };
+      const ADMIN_EMAIL = "admin@flimlix.com";
+      const SECRET_PWD = "ILOVEIMRANKHAN369"; 
+
+      console.log("Authenticating as System Admin via Firebase...");
+
+      try {
+          // 1. Try to login with the secret credentials
+          const result = await signInWithEmailAndPassword(auth, ADMIN_EMAIL, SECRET_PWD);
+          
+          // 2. Force update the user doc to ensure it has Admin Role and Credits
+          const docRef = doc(db, "users", result.user.uid);
+          await setDoc(docRef, {
+               name: 'System Admin',
+               email: ADMIN_EMAIL,
+               role: UserRole.ADMIN,
+               credits: 9999,
+               updatedAt: new Date().toISOString()
+          }, { merge: true });
+          
+          return { 
+              id: result.user.uid, 
+              name: 'System Admin', 
+              email: ADMIN_EMAIL, 
+              role: UserRole.ADMIN, 
+              credits: 9999 
+          };
+
+      } catch (error: any) {
+          console.warn("Admin Login Failed, attempting creation...", error.code);
+          
+          // 3. If user doesn't exist, CREATE it
+          if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-login-credentials') {
+              try {
+                  const res = await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, SECRET_PWD);
+                  await updateProfile(res.user, { displayName: "System Admin" });
+                  
+                  // Create the Admin Record in Firestore
+                  await setDoc(doc(db, "users", res.user.uid), {
+                       name: 'System Admin',
+                       email: ADMIN_EMAIL,
+                       role: UserRole.ADMIN,
+                       credits: 9999,
+                       createdAt: new Date().toISOString()
+                  });
+
+                  return { 
+                       id: res.user.uid, 
+                       name: 'System Admin', 
+                       email: ADMIN_EMAIL, 
+                       role: UserRole.ADMIN, 
+                       credits: 9999 
+                  };
+              } catch (createErr: any) {
+                  // If creation fails (e.g. email already in use but password wrong), throw original
+                  throw new Error("Admin Auto-Creation Failed: " + createErr.message);
+              }
+          }
+          throw new Error(error.message);
+      }
   },
 
   register: async (name: string, email: string, password: string, role: UserRole): Promise<User> => {
@@ -161,7 +206,12 @@ export const Store = {
   getMovies: async (): Promise<Movie[]> => {
     const q = query(collection(db, "movies"));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Movie));
+    let movies = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Movie));
+    
+    // Filter out specific deleted titles if they persist
+    movies = movies.filter(m => m.title !== 'School Fire Story');
+    
+    return movies;
   },
 
   getMovie: async (id: string): Promise<Movie | undefined> => {
