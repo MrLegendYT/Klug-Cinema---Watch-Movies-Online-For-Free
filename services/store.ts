@@ -4,30 +4,40 @@ import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, si
 import { getFirestore, collection, getDocs, getDoc, doc, setDoc, updateDoc, addDoc, query, where, deleteDoc, writeBatch } from 'firebase/firestore';
 
 // --- FIREBASE CONFIGURATION ---
-// REPLACE WITH YOUR ACTUAL FIREBASE CONFIG KEYS
+// We now check for Environment Variables (Best Practice for Vercel)
+// If these are missing, it falls back to placeholders and runs in MOCK MODE.
+const env = (import.meta as any).env || {};
+
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "SENDER_ID",
-  appId: "APP_ID"
+  apiKey: env.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: env.VITE_FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || "SENDER_ID",
+  appId: env.VITE_FIREBASE_APP_ID || "APP_ID"
 };
 
 // Check if config is valid to determine mode
-const IS_FIREBASE_CONFIGURED = firebaseConfig.apiKey !== "YOUR_API_KEY";
+// It checks if the key starts with "AIza" (standard Firebase key prefix) or is not the placeholder
+const IS_FIREBASE_CONFIGURED = 
+  firebaseConfig.apiKey !== "YOUR_API_KEY" && 
+  firebaseConfig.apiKey.startsWith("AIza");
 
 let app: FirebaseApp;
 let auth: any;
 let db: any;
 
 if (IS_FIREBASE_CONFIGURED) {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
-  console.log("🔥 Firebase Mode Active");
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    console.log("🔥 Firebase Mode Active");
+  } catch (e) {
+    console.error("Firebase init failed:", e);
+  }
 } else {
-  console.warn("⚠️ Firebase keys missing. Running in MOCK Mode.");
+  console.warn("⚠️ Firebase keys missing or invalid. Running in MOCK Mode (LocalStorage).");
 }
 
 // --- MOCK DATA (Fallback) ---
@@ -71,7 +81,7 @@ const saveMock = (key: string, data: any) => localStorage.setItem(key, JSON.stri
 export const Store = {
   
   initAuthListener: (callback: (user: User | null) => void) => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && auth) {
       onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
         if (firebaseUser) {
           // Fetch additional user details from Firestore
@@ -108,7 +118,7 @@ export const Store = {
   },
 
   login: async (email: string, password?: string): Promise<User | null> => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && auth) {
       try {
         const result = await signInWithEmailAndPassword(auth, email, password || 'dummy');
         const docRef = doc(db, "users", result.user.uid);
@@ -148,7 +158,7 @@ export const Store = {
   },
 
   register: async (name: string, email: string, password: string, role: UserRole): Promise<User> => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && auth) {
       try {
         const result = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(result.user, { displayName: name });
@@ -187,7 +197,7 @@ export const Store = {
   },
 
   logout: async () => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && auth) {
       await signOut(auth);
     } else {
       localStorage.removeItem('klug_current_user');
@@ -197,7 +207,7 @@ export const Store = {
   // --- DATA METHODS (PROMISIFIED) ---
 
   getMovies: async (): Promise<Movie[]> => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && db) {
       const q = query(collection(db, "movies"));
       const snapshot = await getDocs(q);
       return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Movie));
@@ -221,7 +231,7 @@ export const Store = {
   },
 
   getMovie: async (id: string): Promise<Movie | undefined> => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && db) {
       const ref = doc(db, "movies", id);
       const snap = await getDoc(ref);
       return snap.exists() ? ({ id: snap.id, ...snap.data() } as Movie) : undefined;
@@ -232,7 +242,7 @@ export const Store = {
   },
 
   addMovie: async (movie: Movie) => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && db) {
         const { id, ...data } = movie;
         await setDoc(doc(db, "movies", id), data); 
     } else {
@@ -243,7 +253,7 @@ export const Store = {
   },
 
   updateMovie: async (movie: Movie) => {
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && db) {
         const { id, ...data } = movie;
         await updateDoc(doc(db, "movies", id), data);
     } else {
@@ -258,7 +268,7 @@ export const Store = {
 
   deleteMovie: async (id: string) => {
     console.log(`Attempting to delete movie: ${id}`);
-    if (IS_FIREBASE_CONFIGURED) {
+    if (IS_FIREBASE_CONFIGURED && db) {
         try {
             const batch = writeBatch(db);
             
@@ -310,7 +320,7 @@ export const Store = {
   },
 
   getCategories: async (): Promise<Category[]> => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
         return INITIAL_CATEGORIES; 
       } else {
         return loadMock('klug_categories', INITIAL_CATEGORIES);
@@ -318,7 +328,7 @@ export const Store = {
   },
 
   getRequests: async (): Promise<Request[]> => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
         const q = query(collection(db, "requests"));
         const snapshot = await getDocs(q);
         return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Request));
@@ -328,7 +338,7 @@ export const Store = {
   },
 
   addRequest: async (req: Request) => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
           const { id, ...data } = req;
           await setDoc(doc(db, "requests", id), data);
       } else {
@@ -339,7 +349,7 @@ export const Store = {
   },
 
   updateRequest: async (req: Request) => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
         const { id, ...data } = req;
         await updateDoc(doc(db, "requests", id), data);
       } else {
@@ -353,7 +363,7 @@ export const Store = {
   },
 
   getUsers: async (): Promise<User[]> => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
           const q = query(collection(db, "users"));
           const snap = await getDocs(q);
           return snap.docs.map(d => ({ id: d.id, ...d.data() } as User));
@@ -363,7 +373,7 @@ export const Store = {
   },
 
   updateUser: async (user: User) => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
           const { id, ...data } = user;
           const cleanData = JSON.parse(JSON.stringify(data));
           delete cleanData.password; 
@@ -383,7 +393,7 @@ export const Store = {
   },
 
   getSettings: async (): Promise<AppSettings> => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
           const snap = await getDoc(doc(db, "settings", "global"));
           if (snap.exists()) return snap.data() as AppSettings;
           return INITIAL_SETTINGS;
@@ -393,7 +403,7 @@ export const Store = {
   },
 
   updateSettings: async (settings: AppSettings) => {
-      if (IS_FIREBASE_CONFIGURED) {
+      if (IS_FIREBASE_CONFIGURED && db) {
           await setDoc(doc(db, "settings", "global"), settings);
       } else {
           saveMock('klug_settings', settings);
